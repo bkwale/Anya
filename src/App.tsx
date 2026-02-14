@@ -3,8 +3,13 @@ import { type Module } from "./lib/data";
 import Welcome from "./components/Welcome";
 import Home from "./components/Home";
 import Session from "./components/Session";
+import Progress from "./components/Progress";
 
-type Screen = { type: "welcome" } | { type: "home" } | { type: "session"; module: Module };
+type Screen =
+  | { type: "welcome" }
+  | { type: "home" }
+  | { type: "session"; module: Module }
+  | { type: "progress" };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ type: "welcome" });
@@ -23,6 +28,15 @@ export default function App() {
     setScreen({ type: "home" });
   };
 
+  const handleOpenProgress = () => {
+    setScreen({ type: "progress" });
+  };
+
+  const handleBackFromProgress = () => {
+    setHomeKey((k) => k + 1);
+    setScreen({ type: "home" });
+  };
+
   if (screen.type === "welcome") {
     return <Welcome onBegin={handleBegin} />;
   }
@@ -31,5 +45,15 @@ export default function App() {
     return <Session module={screen.module} onFinish={handleFinish} />;
   }
 
-  return <Home key={homeKey} onStartModule={handleStartModule} />;
+  if (screen.type === "progress") {
+    return <Progress onBack={handleBackFromProgress} />;
+  }
+
+  return (
+    <Home
+      key={homeKey}
+      onStartModule={handleStartModule}
+      onOpenProgress={handleOpenProgress}
+    />
+  );
 }

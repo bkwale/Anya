@@ -186,6 +186,7 @@ export default function Session({ module, onFinish }: SessionProps) {
         <PromptCard
           key={module.prompts[currentIndex].id}
           prompt={module.prompts[currentIndex]}
+          moduleId={module.id}
           stream={stream}
           onComplete={handlePromptComplete}
           index={currentIndex}

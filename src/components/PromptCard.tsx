@@ -2,9 +2,11 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { type Prompt } from "../lib/data";
 import { createRecorder, type Recording } from "../lib/audio";
 import { speak } from "../lib/speech";
+import { saveRecording, todayStr } from "../lib/db";
 
 interface PromptCardProps {
   prompt: Prompt;
+  moduleId: string;
   stream: MediaStream;
   onComplete: () => void;
   index: number;
@@ -13,7 +15,7 @@ interface PromptCardProps {
 
 type Phase = "ready" | "listening" | "recording" | "recorded" | "playing";
 
-export default function PromptCard({ prompt, stream, onComplete, index, total }: PromptCardProps) {
+export default function PromptCard({ prompt, moduleId, stream, onComplete, index, total }: PromptCardProps) {
   const [phase, setPhase] = useState<Phase>("ready");
   const [recording, setRecording] = useState<Recording | null>(null);
   const recorderRef = useRef<ReturnType<typeof createRecorder> | null>(null);
@@ -29,7 +31,6 @@ export default function PromptCard({ prompt, stream, onComplete, index, total }:
   const handleListen = useCallback(async () => {
     setPhase("listening");
     try {
-      // Clean text for TTS (remove dashes and extra spaces)
       const cleanText = prompt.text.replace(/\s*—\s*/g, " ... ");
       await speak(cleanText);
     } catch {
@@ -69,6 +70,24 @@ export default function PromptCard({ prompt, stream, onComplete, index, total }:
     setPhase("ready");
   }, [recording]);
 
+  // Save recording to IndexedDB and move on
+  const handleComplete = useCallback(async () => {
+    if (recording?.blob) {
+      const now = new Date();
+      await saveRecording({
+        id: `${todayStr()}-${moduleId}-${prompt.id}-${now.getTime()}`,
+        date: todayStr(),
+        moduleId,
+        promptId: prompt.id,
+        promptText: prompt.text,
+        blob: recording.blob,
+        durationSeconds: recording.duration,
+        createdAt: now.toISOString(),
+      });
+    }
+    onComplete();
+  }, [recording, moduleId, prompt, onComplete]);
+
   return (
     <div className="prompt-card">
       <div className="prompt-progress">
@@ -84,7 +103,6 @@ export default function PromptCard({ prompt, stream, onComplete, index, total }:
       )}
 
       <div className="prompt-actions">
-        {/* Listen button — always available except while recording */}
         {phase !== "recording" && (
           <button
             className={`btn btn-listen ${phase === "listening" ? "btn-active" : ""}`}
@@ -96,7 +114,6 @@ export default function PromptCard({ prompt, stream, onComplete, index, total }:
           </button>
         )}
 
-        {/* Record / Stop button */}
         {(phase === "ready" || phase === "listening") && (
           <button className="btn btn-record" onClick={handleRecord} aria-label="Record yourself">
             🎙️ Record
@@ -113,7 +130,6 @@ export default function PromptCard({ prompt, stream, onComplete, index, total }:
           </button>
         )}
 
-        {/* After recording: playback + try again + next */}
         {(phase === "recorded" || phase === "playing") && (
           <>
             <button
@@ -131,14 +147,12 @@ export default function PromptCard({ prompt, stream, onComplete, index, total }:
         )}
       </div>
 
-      {/* Next / Done button — shown after recording */}
       {(phase === "recorded" || phase === "playing") && (
-        <button className="btn btn-next" onClick={onComplete} aria-label={index < total - 1 ? "Next phrase" : "Finish"}>
+        <button className="btn btn-next" onClick={handleComplete} aria-label={index < total - 1 ? "Next phrase" : "Finish"}>
           {index < total - 1 ? "Next →" : "Finish ✓"}
         </button>
       )}
 
-      {/* Skip option — always available */}
       {phase !== "recording" && (phase === "ready" || phase === "listening") && (
         <button className="btn-skip" onClick={onComplete} aria-label="Skip this phrase">
           Skip for now →

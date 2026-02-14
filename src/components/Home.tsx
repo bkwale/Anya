@@ -4,10 +4,11 @@ import { getStats, getSessionsByDate, todayStr, type SessionRecord } from "../li
 
 interface HomeProps {
   onStartModule: (module: Module) => void;
+  onOpenProgress: () => void;
 }
 
-export default function Home({ onStartModule }: HomeProps) {
-  const [stats, setStats] = useState({ totalSessions: 0, totalPrompts: 0, streakDays: 0 });
+export default function Home({ onStartModule, onOpenProgress }: HomeProps) {
+  const [stats, setStats] = useState({ totalSessions: 0, totalPrompts: 0, streakDays: 0, totalRecordings: 0 });
   const [todaySessions, setTodaySessions] = useState<SessionRecord[]>([]);
 
   useEffect(() => {
@@ -60,6 +61,21 @@ export default function Home({ onStartModule }: HomeProps) {
             </button>
           );
         })}
+
+        {/* My Recordings button */}
+        {stats.totalRecordings > 0 && (
+          <button
+            className="module-card"
+            onClick={onOpenProgress}
+            aria-label="Listen to your recordings"
+          >
+            <span className="module-icon">🎧</span>
+            <div className="module-info">
+              <span className="module-title">My Recordings</span>
+              <span className="module-desc">Listen back and hear how you're improving</span>
+            </div>
+          </button>
+        )}
       </div>
 
       <footer className="home-footer">
