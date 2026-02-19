@@ -19,6 +19,25 @@ export function releaseMic(stream: MediaStream): void {
 }
 
 /**
+ * Detect a supported MIME type for MediaRecorder.
+ * Safari doesn't support webm; Android Chrome does.
+ */
+function getSupportedMimeType(): string {
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+    "",
+  ];
+  for (const t of types) {
+    if (t === "" || MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+/**
  * Create a fresh recorder for a single recording.
  * Each call returns a new recorder (MediaRecorder can't be restarted after stop).
  */
@@ -28,7 +47,10 @@ export function createRecorder(stream: MediaStream): {
   isRecording: () => boolean;
 } {
   const chunks: Blob[] = [];
-  const recorder = new MediaRecorder(stream);
+  const mimeType = getSupportedMimeType();
+  const recorder = mimeType
+    ? new MediaRecorder(stream, { mimeType })
+    : new MediaRecorder(stream);
   let startTime = 0;
 
   recorder.ondataavailable = (e) => {
@@ -37,15 +59,18 @@ export function createRecorder(stream: MediaStream): {
 
   return {
     start() {
-      chunks.length = 0; // clear any prior data
+      chunks.length = 0;
       startTime = Date.now();
-      recorder.start();
+      // Use timeslice to ensure data is pushed in chunks during recording
+      recorder.start(200);
     },
 
     stop(): Promise<Recording> {
       return new Promise((resolve) => {
         recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: "audio/webm" });
+          // Use the actual mimeType from the recorder
+          const actualType = recorder.mimeType || mimeType || "audio/webm";
+          const blob = new Blob(chunks, { type: actualType });
           const url = URL.createObjectURL(blob);
           const duration = (Date.now() - startTime) / 1000;
           resolve({ blob, url, duration });

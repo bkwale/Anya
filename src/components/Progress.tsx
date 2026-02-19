@@ -85,7 +85,17 @@ export default function Progress({ onBack }: ProgressProps) {
       audioRef.current = null;
     };
 
-    audio.play();
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      setPlayingId(null);
+      audioRef.current = null;
+    };
+
+    audio.play().catch(() => {
+      URL.revokeObjectURL(url);
+      setPlayingId(null);
+      audioRef.current = null;
+    });
   }, [playingId]);
 
   // Empty state

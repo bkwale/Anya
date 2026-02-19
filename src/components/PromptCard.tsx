@@ -3,6 +3,12 @@ import { type Prompt } from "../lib/data";
 import { createRecorder, type Recording } from "../lib/audio";
 import { speak } from "../lib/speech";
 import { saveRecording, todayStr } from "../lib/db";
+import {
+  startListening,
+  grade,
+  isSpeechRecognitionSupported,
+  type GradeResult,
+} from "../lib/grading";
 
 interface PromptCardProps {
   prompt: Prompt;
@@ -18,15 +24,20 @@ type Phase = "ready" | "listening" | "recording" | "recorded" | "playing";
 export default function PromptCard({ prompt, moduleId, stream, onComplete, index, total }: PromptCardProps) {
   const [phase, setPhase] = useState<Phase>("ready");
   const [recording, setRecording] = useState<Recording | null>(null);
+  const [gradeResult, setGradeResult] = useState<GradeResult | null>(null);
   const recorderRef = useRef<ReturnType<typeof createRecorder> | null>(null);
+  const recognitionRef = useRef<ReturnType<typeof startListening> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Clean up audio URL on unmount
+  // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (recording?.url) URL.revokeObjectURL(recording.url);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
-  }, [recording]);
+  }, []);
 
   const handleListen = useCallback(async () => {
     setPhase("listening");
@@ -34,43 +45,97 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
       const cleanText = prompt.text.replace(/\s*—\s*/g, " ... ");
       await speak(cleanText);
     } catch {
-      // TTS not available — that's okay
+      // TTS not available
     }
     setPhase("ready");
   }, [prompt.text]);
 
   const handleRecord = useCallback(() => {
+    // Clean up previous recording URL
+    if (recording?.url) URL.revokeObjectURL(recording.url);
+
     const rec = createRecorder(stream);
     recorderRef.current = rec;
     rec.start();
+
+    // Start speech recognition alongside recording
+    if (isSpeechRecognitionSupported()) {
+      recognitionRef.current = startListening();
+    }
+
     setPhase("recording");
     setRecording(null);
-  }, [stream]);
+    setGradeResult(null);
+  }, [stream, recording]);
 
   const handleStopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
+
+    // Stop recognition
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+
     const result = await recorderRef.current.stop();
     setRecording(result);
-    setPhase("recorded");
     recorderRef.current = null;
-  }, []);
+
+    // Get grade
+    if (recognitionRef.current) {
+      const transcript = await recognitionRef.current.getResult();
+      recognitionRef.current = null;
+      if (transcript) {
+        const result = grade(transcript, prompt.text);
+        setGradeResult(result);
+      }
+    }
+
+    setPhase("recorded");
+  }, [prompt.text]);
 
   const handlePlayback = useCallback(() => {
-    if (!recording?.url) return;
-    const audio = new Audio(recording.url);
+    if (!recording) return;
+
+    // Stop any current playback
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    // Create fresh URL from blob for reliable playback
+    const url = URL.createObjectURL(recording.blob);
+    const audio = new Audio(url);
     audioRef.current = audio;
     setPhase("playing");
-    audio.onended = () => setPhase("recorded");
-    audio.play();
+
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      audioRef.current = null;
+      setPhase("recorded");
+    };
+
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      audioRef.current = null;
+      setPhase("recorded");
+    };
+
+    audio.play().catch(() => {
+      setPhase("recorded");
+    });
   }, [recording]);
 
   const handleTryAgain = useCallback(() => {
     if (recording?.url) URL.revokeObjectURL(recording.url);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     setRecording(null);
+    setGradeResult(null);
     setPhase("ready");
   }, [recording]);
 
-  // Save recording to IndexedDB and move on
   const handleComplete = useCallback(async () => {
     if (recording?.blob) {
       const now = new Date();
@@ -100,6 +165,25 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
 
       {prompt.hint && (
         <div className="prompt-hint">{prompt.hint}</div>
+      )}
+
+      {/* Grade result — shown after recording */}
+      {gradeResult && (phase === "recorded" || phase === "playing") && (
+        <div className="grade-result" aria-live="polite">
+          <div className="grade-stars">
+            {[1, 2, 3].map((s) => (
+              <span key={s} className={`grade-star ${s <= gradeResult.stars ? "filled" : ""}`}>
+                ★
+              </span>
+            ))}
+          </div>
+          <p className="grade-feedback">{gradeResult.feedback}</p>
+          {gradeResult.transcript && (
+            <p className="grade-transcript">
+              I heard: <em>"{gradeResult.transcript}"</em>
+            </p>
+          )}
+        </div>
       )}
 
       <div className="prompt-actions">

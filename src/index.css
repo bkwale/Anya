@@ -392,6 +392,48 @@ body {
   font-style: italic;
 }
 
+/* Grade result */
+.grade-result {
+  text-align: center;
+  margin-bottom: 1.25rem;
+  animation: fadeInUp 0.4s ease;
+}
+
+.grade-stars {
+  display: flex;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
+}
+
+.grade-star {
+  font-size: 1.8rem;
+  color: var(--color-border);
+  transition: color 0.3s ease;
+}
+
+.grade-star.filled {
+  color: #f0b429;
+}
+
+.grade-feedback {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: 0.3rem;
+}
+
+.grade-transcript {
+  font-size: 0.82rem;
+  color: var(--color-text-soft);
+}
+
+.grade-transcript em {
+  color: var(--color-text);
+  font-style: normal;
+  font-weight: 500;
+}
+
 /* Action buttons */
 .prompt-actions {
   display: flex;
