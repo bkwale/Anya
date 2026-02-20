@@ -4,6 +4,7 @@ import Welcome from "./components/Welcome";
 import Home from "./components/Home";
 import Session from "./components/Session";
 import Progress from "./components/Progress";
+import { Analytics } from "@vercel/analytics/react";
 
 type Screen =
   | { type: "welcome" }
@@ -38,22 +39,40 @@ export default function App() {
   };
 
   if (screen.type === "welcome") {
-    return <Welcome onBegin={handleBegin} />;
+    return (
+      <>
+        <Welcome onBegin={handleBegin} />
+        <Analytics />
+      </>
+    );
   }
 
   if (screen.type === "session") {
-    return <Session module={screen.module} onFinish={handleFinish} />;
+    return (
+      <>
+        <Session module={screen.module} onFinish={handleFinish} />
+        <Analytics />
+      </>
+    );
   }
 
   if (screen.type === "progress") {
-    return <Progress onBack={handleBackFromProgress} />;
+    return (
+      <>
+        <Progress onBack={handleBackFromProgress} />
+        <Analytics />
+      </>
+    );
   }
 
   return (
-    <Home
-      key={homeKey}
-      onStartModule={handleStartModule}
-      onOpenProgress={handleOpenProgress}
-    />
+    <>
+      <Home
+        key={homeKey}
+        onStartModule={handleStartModule}
+        onOpenProgress={handleOpenProgress}
+      />
+      <Analytics />
+    </>
   );
 }
