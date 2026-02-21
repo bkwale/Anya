@@ -4,6 +4,7 @@ import {
   getRecordingsByDate,
   type RecordingRecord,
 } from "../lib/db";
+import { playBlob, primeAudio } from "../lib/audio";
 
 interface ProgressProps {
   onBack: () => void;
@@ -34,14 +35,14 @@ export default function Progress({ onBack }: ProgressProps) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<RecordingRecord[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   // Load dates on mount
   useEffect(() => {
     getRecordingDates().then((d) => {
       setDates(d);
       if (d.length > 0) {
-        setSelectedDate(d[0]); // default to most recent
+        setSelectedDate(d[0]);
       }
     });
   }, []);
@@ -55,62 +56,64 @@ export default function Progress({ onBack }: ProgressProps) {
   // Clean up audio on unmount
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
       }
     };
   }, []);
 
-  const handlePlay = useCallback((rec: RecordingRecord) => {
-    // Stop any currently playing audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
+  const handlePlay = useCallback(
+    (rec: RecordingRecord) => {
+      // Prime audio on user gesture (iOS)
+      primeAudio();
 
-    if (playingId === rec.id) {
-      setPlayingId(null);
-      return;
-    }
+      // Stop any currently playing audio
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
 
-    const url = URL.createObjectURL(rec.blob);
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    setPlayingId(rec.id);
+      // Toggle off if already playing this one
+      if (playingId === rec.id) {
+        setPlayingId(null);
+        return;
+      }
 
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      setPlayingId(null);
-      audioRef.current = null;
-    };
+      setPlayingId(rec.id);
 
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      setPlayingId(null);
-      audioRef.current = null;
-    };
-
-    audio.play().catch(() => {
-      URL.revokeObjectURL(url);
-      setPlayingId(null);
-      audioRef.current = null;
-    });
-  }, [playingId]);
+      const cleanup = playBlob(
+        rec.blob,
+        () => {
+          setPlayingId(null);
+          cleanupRef.current = null;
+        },
+        () => {
+          setPlayingId(null);
+          cleanupRef.current = null;
+        },
+      );
+      cleanupRef.current = cleanup;
+    },
+    [playingId],
+  );
 
   // Empty state
   if (dates.length === 0) {
     return (
       <div className="progress-screen">
         <header className="progress-header">
-          <button className="btn-back" onClick={onBack}>← Back</button>
+          <button className="btn-back" onClick={onBack}>
+            ← Back
+          </button>
           <h2 className="progress-title">My Recordings</h2>
         </header>
         <div className="progress-empty">
           <p className="progress-empty-icon">🎙️</p>
           <p className="progress-empty-text">No recordings yet.</p>
           <p className="progress-empty-sub">
-            Complete a practice session and your recordings will appear here so you can listen back and hear your progress.
+            Complete a practice session and your recordings will appear here so
+            you can listen back and hear your progress.
           </p>
         </div>
       </div>
@@ -120,7 +123,9 @@ export default function Progress({ onBack }: ProgressProps) {
   return (
     <div className="progress-screen">
       <header className="progress-header">
-        <button className="btn-back" onClick={onBack}>← Back</button>
+        <button className="btn-back" onClick={onBack}>
+          ← Back
+        </button>
         <h2 className="progress-title">My Recordings</h2>
       </header>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { type Module, getRandomEncouragement } from "../lib/data";
-import { requestMic, releaseMic } from "../lib/audio";
+import { requestMic, releaseMic, primeAudio } from "../lib/audio";
 import { saveSession, todayStr } from "../lib/db";
 import { preloadVoices } from "../lib/speech";
 import PromptCard from "./PromptCard";
@@ -32,6 +32,8 @@ export default function Session({ module, onFinish }: SessionProps) {
           setStream(s);
           setPhase("active");
           startTimeRef.current = Date.now();
+          // Prime the audio element on this user-gesture chain (iOS)
+          primeAudio();
         }
       })
       .catch(() => {
@@ -48,6 +50,24 @@ export default function Session({ module, onFinish }: SessionProps) {
     return () => {
       if (stream) releaseMic(stream);
     };
+  }, [stream]);
+
+  /**
+   * Handle mic stream dying mid-session (e.g. iOS suspends mic when
+   * switching apps). Re-request mic automatically.
+   */
+  const handleMicDead = useCallback(async () => {
+    // Release the dead stream
+    if (stream) releaseMic(stream);
+    setStream(null);
+
+    try {
+      const newStream = await requestMic();
+      setStream(newStream);
+    } catch {
+      setMicError(true);
+      setPhase("mic-request");
+    }
   }, [stream]);
 
   const handlePromptComplete = useCallback(() => {
@@ -111,9 +131,12 @@ export default function Session({ module, onFinish }: SessionProps) {
         <div className="session-center">
           {micError ? (
             <>
-              <p className="session-message">Anya needs microphone access to record your practice.</p>
+              <p className="session-message">
+                Anya needs microphone access to record your practice.
+              </p>
               <p className="session-submessage">
-                Please allow microphone access in your browser settings, then try again.
+                Please allow microphone access in your browser settings, then
+                try again.
               </p>
               <button className="btn btn-primary" onClick={onFinish}>
                 Go Back
@@ -122,7 +145,9 @@ export default function Session({ module, onFinish }: SessionProps) {
           ) : (
             <>
               <div className="loading-spinner" />
-              <p className="session-message">Getting your microphone ready...</p>
+              <p className="session-message">
+                Getting your microphone ready...
+              </p>
             </>
           )}
         </div>
@@ -143,7 +168,9 @@ export default function Session({ module, onFinish }: SessionProps) {
 
   // --- Summary ---
   if (phase === "summary") {
-    const duration = Math.round((Date.now() - startTimeRef.current) / 1000);
+    const duration = Math.round(
+      (Date.now() - startTimeRef.current) / 1000,
+    );
     const mins = Math.floor(duration / 60);
     const secs = duration % 60;
 
@@ -153,11 +180,14 @@ export default function Session({ module, onFinish }: SessionProps) {
           <div className="summary-icon">🎉</div>
           <h2 className="summary-title">Session Complete</h2>
           <p className="summary-detail">
-            You practised <strong>{completedCount}</strong> {completedCount === 1 ? "phrase" : "phrases"} in{" "}
+            You practised <strong>{completedCount}</strong>{" "}
+            {completedCount === 1 ? "phrase" : "phrases"} in{" "}
             {mins > 0 ? `${mins}m ` : ""}
             {secs}s
           </p>
-          <p className="summary-encouragement">{getRandomEncouragement()}</p>
+          <p className="summary-encouragement">
+            {getRandomEncouragement()}
+          </p>
           <button className="btn btn-primary" onClick={onFinish}>
             Done
           </button>
@@ -170,14 +200,22 @@ export default function Session({ module, onFinish }: SessionProps) {
   return (
     <div className="session-screen">
       <header className="session-header">
-        <button className="btn-back" onClick={handleQuit} aria-label="End session early">
+        <button
+          className="btn-back"
+          onClick={handleQuit}
+          aria-label="End session early"
+        >
           ← Back
         </button>
-        <span className="session-title">{module.icon} {module.title}</span>
+        <span className="session-title">
+          {module.icon} {module.title}
+        </span>
         <div className="session-progress-bar">
           <div
             className="session-progress-fill"
-            style={{ width: `${((currentIndex) / module.prompts.length) * 100}%` }}
+            style={{
+              width: `${(currentIndex / module.prompts.length) * 100}%`,
+            }}
           />
         </div>
       </header>
@@ -189,6 +227,7 @@ export default function Session({ module, onFinish }: SessionProps) {
           moduleId={module.id}
           stream={stream}
           onComplete={handlePromptComplete}
+          onMicDead={handleMicDead}
           index={currentIndex}
           total={module.prompts.length}
         />
