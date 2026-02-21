@@ -9,7 +9,10 @@ export default defineConfig({
       registerType: "autoUpdate",
       workbox: {
         // Precache all built assets so the app works fully offline
-        globPatterns: ["**/*.{js,css,html,ico,svg,png,woff2}"],
+        globPatterns: ["**/*.{js,css,html,ico,svg,png,mp3,woff2}"],
+        // Force new service worker to take over immediately
+        skipWaiting: true,
+        clientsClaim: true,
         runtimeCaching: [
           {
             // Cache Google Fonts if any are used
