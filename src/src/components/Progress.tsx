@@ -4,7 +4,7 @@ import {
   getRecordingsByDate,
   type RecordingRecord,
 } from "../lib/db";
-import { playBlob } from "../lib/audio";
+import { playBlob, primeAudio } from "../lib/audio";
 
 interface ProgressProps {
   onBack: () => void;
@@ -42,7 +42,7 @@ export default function Progress({ onBack }: ProgressProps) {
     getRecordingDates().then((d) => {
       setDates(d);
       if (d.length > 0) {
-        setSelectedDate(d[0]); // default to most recent
+        setSelectedDate(d[0]);
       }
     });
   }, []);
@@ -63,41 +63,57 @@ export default function Progress({ onBack }: ProgressProps) {
     };
   }, []);
 
-  const handlePlay = useCallback((rec: RecordingRecord) => {
-    // Stop any currently playing audio
-    if (cleanupRef.current) {
-      cleanupRef.current();
-      cleanupRef.current = null;
-    }
+  const handlePlay = useCallback(
+    (rec: RecordingRecord) => {
+      // Prime audio on user gesture (iOS)
+      primeAudio();
 
-    if (playingId === rec.id) {
-      setPlayingId(null);
-      return;
-    }
+      // Stop any currently playing audio
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
 
-    setPlayingId(rec.id);
+      // Toggle off if already playing this one
+      if (playingId === rec.id) {
+        setPlayingId(null);
+        return;
+      }
 
-    const cleanup = playBlob(
-      rec.blob,
-      () => { setPlayingId(null); cleanupRef.current = null; },
-      () => { setPlayingId(null); cleanupRef.current = null; },
-    );
-    cleanupRef.current = cleanup;
-  }, [playingId]);
+      setPlayingId(rec.id);
+
+      const cleanup = playBlob(
+        rec.blob,
+        () => {
+          setPlayingId(null);
+          cleanupRef.current = null;
+        },
+        () => {
+          setPlayingId(null);
+          cleanupRef.current = null;
+        },
+      );
+      cleanupRef.current = cleanup;
+    },
+    [playingId],
+  );
 
   // Empty state
   if (dates.length === 0) {
     return (
       <div className="progress-screen">
         <header className="progress-header">
-          <button className="btn-back" onClick={onBack}>← Back</button>
+          <button className="btn-back" onClick={onBack}>
+            ← Back
+          </button>
           <h2 className="progress-title">My Recordings</h2>
         </header>
         <div className="progress-empty">
           <p className="progress-empty-icon">🎙️</p>
           <p className="progress-empty-text">No recordings yet.</p>
           <p className="progress-empty-sub">
-            Complete a practice session and your recordings will appear here so you can listen back and hear your progress.
+            Complete a practice session and your recordings will appear here so
+            you can listen back and hear your progress.
           </p>
         </div>
       </div>
@@ -107,7 +123,9 @@ export default function Progress({ onBack }: ProgressProps) {
   return (
     <div className="progress-screen">
       <header className="progress-header">
-        <button className="btn-back" onClick={onBack}>← Back</button>
+        <button className="btn-back" onClick={onBack}>
+          ← Back
+        </button>
         <h2 className="progress-title">My Recordings</h2>
       </header>
 

@@ -1,6 +1,12 @@
 import { useState, useRef, useCallback } from "react";
 import { type Prompt } from "../lib/data";
-import { createRecorder, playBlob, type Recording } from "../lib/audio";
+import {
+  createRecorder,
+  playBlob,
+  primeAudio,
+  isStreamActive,
+  type Recording,
+} from "../lib/audio";
 import { speak } from "../lib/speech";
 import { saveRecording, todayStr } from "../lib/db";
 import {
@@ -15,13 +21,28 @@ interface PromptCardProps {
   moduleId: string;
   stream: MediaStream;
   onComplete: () => void;
+  onMicDead: () => void; // called when we detect the mic stream has died
   index: number;
   total: number;
 }
 
-type Phase = "ready" | "listening" | "recording" | "recorded" | "playing";
+type Phase =
+  | "ready"
+  | "listening"
+  | "recording"
+  | "stopping"   // NEW: visible "stopping" state so UI never freezes
+  | "recorded"
+  | "playing";
 
-export default function PromptCard({ prompt, moduleId, stream, onComplete, index, total }: PromptCardProps) {
+export default function PromptCard({
+  prompt,
+  moduleId,
+  stream,
+  onComplete,
+  onMicDead,
+  index,
+  total,
+}: PromptCardProps) {
   const [phase, setPhase] = useState<Phase>("ready");
   const [recording, setRecording] = useState<Recording | null>(null);
   const [gradeResult, setGradeResult] = useState<GradeResult | null>(null);
@@ -29,27 +50,51 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
   const recognitionRef = useRef<ReturnType<typeof startListening> | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
 
+  /* ── Listen (TTS) ─────────────────────────────────── */
+
   const handleListen = useCallback(async () => {
+    // Prime audio on the first user gesture (iOS requirement)
+    primeAudio();
     setPhase("listening");
     try {
       const cleanText = prompt.text.replace(/\s*—\s*/g, " ... ");
       await speak(cleanText);
     } catch {
-      // TTS not available
+      // TTS not available — fail silently
     }
     setPhase("ready");
   }, [prompt.text]);
 
+  /* ── Record ───────────────────────────────────────── */
+
   const handleRecord = useCallback(() => {
-    // Clean up previous playback
+    // Prime audio on user gesture
+    primeAudio();
+
+    // Clean up any previous playback
     if (cleanupRef.current) {
       cleanupRef.current();
       cleanupRef.current = null;
     }
 
-    const rec = createRecorder(stream);
-    recorderRef.current = rec;
-    rec.start();
+    // Check stream health before recording
+    if (!isStreamActive(stream)) {
+      onMicDead();
+      return;
+    }
+
+    try {
+      const rec = createRecorder(stream);
+      recorderRef.current = rec;
+      rec.start();
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === "MIC_DEAD") {
+        onMicDead();
+        return;
+      }
+      // Other errors — stay on ready
+      return;
+    }
 
     // Start speech recognition alongside recording
     if (isSpeechRecognitionSupported()) {
@@ -59,32 +104,48 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
     setPhase("recording");
     setRecording(null);
     setGradeResult(null);
-  }, [stream]);
+  }, [stream, onMicDead]);
+
+  /* ── Stop recording ───────────────────────────────── */
 
   const handleStopRecording = useCallback(async () => {
-    if (!recorderRef.current) return;
+    if (!recorderRef.current) {
+      // Shouldn't happen, but recover gracefully
+      setPhase("ready");
+      return;
+    }
 
-    // Stop recognition
+    // Immediately show "stopping" so the user sees feedback
+    setPhase("stopping");
+
+    // Stop speech recognition first
     if (recognitionRef.current) {
       recognitionRef.current.stop();
     }
 
+    // Stop recorder — has 3s timeout built in
     const result = await recorderRef.current.stop();
-    setRecording(result);
     recorderRef.current = null;
 
-    // Get grade
+    setRecording(result);
+
+    // Get grade from speech recognition
     if (recognitionRef.current) {
-      const transcript = await recognitionRef.current.getResult();
-      recognitionRef.current = null;
-      if (transcript) {
-        const gradeResult = grade(transcript, prompt.text);
-        setGradeResult(gradeResult);
+      try {
+        const transcript = await recognitionRef.current.getResult();
+        recognitionRef.current = null;
+        if (transcript) {
+          setGradeResult(grade(transcript, prompt.text));
+        }
+      } catch {
+        recognitionRef.current = null;
       }
     }
 
     setPhase("recorded");
   }, [prompt.text]);
+
+  /* ── Playback ─────────────────────────────────────── */
 
   const handlePlayback = useCallback(() => {
     if (!recording) return;
@@ -97,14 +158,15 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
 
     setPhase("playing");
 
-    // Use the shared playBlob for iOS compatibility
     const cleanup = playBlob(
       recording.blob,
-      () => setPhase("recorded"),  // onEnded
-      () => setPhase("recorded"),  // onError
+      () => setPhase("recorded"), // onEnded
+      () => setPhase("recorded"), // onError — recover to recorded state
     );
     cleanupRef.current = cleanup;
   }, [recording]);
+
+  /* ── Try again ────────────────────────────────────── */
 
   const handleTryAgain = useCallback(() => {
     if (cleanupRef.current) {
@@ -116,12 +178,14 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
     setPhase("ready");
   }, []);
 
+  /* ── Complete (save + next) ───────────────────────── */
+
   const handleComplete = useCallback(async () => {
     if (cleanupRef.current) {
       cleanupRef.current();
       cleanupRef.current = null;
     }
-    if (recording?.blob) {
+    if (recording?.blob && recording.blob.size > 0) {
       const now = new Date();
       await saveRecording({
         id: `${todayStr()}-${moduleId}-${prompt.id}-${now.getTime()}`,
@@ -137,6 +201,8 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
     onComplete();
   }, [recording, moduleId, prompt, onComplete]);
 
+  /* ── Render ───────────────────────────────────────── */
+
   return (
     <div className="prompt-card">
       <div className="prompt-progress">
@@ -147,16 +213,17 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
         {prompt.text}
       </div>
 
-      {prompt.hint && (
-        <div className="prompt-hint">{prompt.hint}</div>
-      )}
+      {prompt.hint && <div className="prompt-hint">{prompt.hint}</div>}
 
-      {/* Grade result — shown after recording */}
+      {/* Grade result */}
       {gradeResult && (phase === "recorded" || phase === "playing") && (
         <div className="grade-result" aria-live="polite">
           <div className="grade-stars">
             {[1, 2, 3].map((s) => (
-              <span key={s} className={`grade-star ${s <= gradeResult.stars ? "filled" : ""}`}>
+              <span
+                key={s}
+                className={`grade-star ${s <= gradeResult.stars ? "filled" : ""}`}
+              >
                 ★
               </span>
             ))}
@@ -171,7 +238,8 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
       )}
 
       <div className="prompt-actions">
-        {phase !== "recording" && (
+        {/* Listen button — hidden during recording/stopping */}
+        {phase !== "recording" && phase !== "stopping" && (
           <button
             className={`btn btn-listen ${phase === "listening" ? "btn-active" : ""}`}
             onClick={handleListen}
@@ -182,12 +250,18 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
           </button>
         )}
 
+        {/* Record button */}
         {(phase === "ready" || phase === "listening") && (
-          <button className="btn btn-record" onClick={handleRecord} aria-label="Record yourself">
+          <button
+            className="btn btn-record"
+            onClick={handleRecord}
+            aria-label="Record yourself"
+          >
             🎙️ Record
           </button>
         )}
 
+        {/* Stop button — visible during recording AND stopping */}
         {phase === "recording" && (
           <button
             className="btn btn-stop-record recording-pulse"
@@ -198,6 +272,14 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
           </button>
         )}
 
+        {/* Stopping indicator */}
+        {phase === "stopping" && (
+          <button className="btn btn-stop-record" disabled aria-label="Saving recording">
+            ⏳ Saving...
+          </button>
+        )}
+
+        {/* Playback + Try Again */}
         {(phase === "recorded" || phase === "playing") && (
           <>
             <button
@@ -208,21 +290,35 @@ export default function PromptCard({ prompt, moduleId, stream, onComplete, index
             >
               {phase === "playing" ? "▶ Playing..." : "▶ Play Back"}
             </button>
-            <button className="btn btn-tryagain" onClick={handleTryAgain} aria-label="Try again">
+            <button
+              className="btn btn-tryagain"
+              onClick={handleTryAgain}
+              aria-label="Try again"
+            >
               🔄 Try Again
             </button>
           </>
         )}
       </div>
 
+      {/* Next / Finish */}
       {(phase === "recorded" || phase === "playing") && (
-        <button className="btn btn-next" onClick={handleComplete} aria-label={index < total - 1 ? "Next phrase" : "Finish"}>
+        <button
+          className="btn btn-next"
+          onClick={handleComplete}
+          aria-label={index < total - 1 ? "Next phrase" : "Finish"}
+        >
           {index < total - 1 ? "Next →" : "Finish ✓"}
         </button>
       )}
 
-      {phase !== "recording" && (phase === "ready" || phase === "listening") && (
-        <button className="btn-skip" onClick={onComplete} aria-label="Skip this phrase">
+      {/* Skip */}
+      {(phase === "ready" || phase === "listening") && (
+        <button
+          className="btn-skip"
+          onClick={onComplete}
+          aria-label="Skip this phrase"
+        >
           Skip for now →
         </button>
       )}
